@@ -36,13 +36,18 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Load environment variables
-# For Streamlit Cloud: use st.secrets, for local: use .env
+client_id = None
+client_secret = None
+
+# Try Streamlit secrets first
 try:
-    # Streamlit Cloud
-    client_id = st.secrets["SPOTIFY_CLIENT_ID"]
-    client_secret = st.secrets["SPOTIFY_CLIENT_SECRET"]
-except (KeyError, FileNotFoundError):
-    # Local development
+    client_id = st.secrets.get("SPOTIFY_CLIENT_ID")
+    client_secret = st.secrets.get("SPOTIFY_CLIENT_SECRET")
+except:
+    pass
+
+# Fall back to .env file
+if not client_id or not client_secret:
     load_dotenv("file.env")
     client_id = os.getenv("SPOTIFY_CLIENT_ID")
     client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
@@ -205,69 +210,80 @@ elif page == "🎧 Spotify Search":
     st.markdown("Search for a song on Spotify and find similar songs in our dataset")
     
     if not client_id or not client_secret:
-        st.error("❌ Spotify credentials not configured. Please add them to `file.env`")
+        st.error("❌ Spotify credentials not configured")
+        st.info("📝 Instructions: Add your Spotify credentials to the app settings")
     else:
         song_query = st.text_input("Enter a song name to search on Spotify:")
         n_recommendations = st.number_input("Number of recommendations", min_value=1, max_value=20, value=5, key="spotify_n")
         
         if st.button("🔍 Search on Spotify", key="btn_spotify"):
-            try:
-                sp = spotipy.Spotify(
-                    auth_manager=SpotifyClientCredentials(
-                        client_id=client_id,
-                        client_secret=client_secret
-                    )
-                )
-                
-                with st.spinner("Searching Spotify..."):
-                    result = sp.search(q=song_query, type="track", limit=1)
-                
-                if not result["tracks"]["items"]:
-                    st.error(f"❌ Song '{song_query}' not found on Spotify")
-                else:
-                    track = result["tracks"]["items"][0]
-                    audio_features = sp.audio_features([track["id"]])[0]
+            if not song_query:
+                st.warning("⚠️ Please enter a song name")
+            else:
+                try:
+                    with st.spinner("Connecting to Spotify API..."):
+                        sp = spotipy.Spotify(
+                            auth_manager=SpotifyClientCredentials(
+                                client_id=client_id,
+                                client_secret=client_secret
+                            )
+                        )
                     
-                    if not audio_features:
-                        st.error(f"❌ Could not fetch audio features for '{track['name']}'")
+                    with st.spinner("Searching for your song..."):
+                        result = sp.search(q=song_query, type="track", limit=1)
+                    
+                    if not result["tracks"]["items"]:
+                        st.error(f"❌ Song '{song_query}' not found on Spotify")
                     else:
-                        live_vector = [
-                            audio_features["danceability"],
-                            audio_features["energy"],
-                            audio_features["tempo"],
-                            audio_features["valence"]
-                        ]
+                        track = result["tracks"]["items"][0]
                         
-                        live_vector_scaled = scaler.transform([live_vector])
-                        similarities = cosine_similarity(live_vector_scaled, scaled_features)[0]
+                        with st.spinner("Fetching audio features..."):
+                            audio_features = sp.audio_features([track["id"]])[0]
                         
-                        temp_df = df.copy()
-                        temp_df["similarity"] = similarities
-                        recommendations = temp_df.sort_values(by="similarity", ascending=False).head(n_recommendations)
-                        
-                        # Display found song
-                        col1, col2 = st.columns([1, 2])
-                        with col1:
-                            if track["album"]["images"]:
-                                st.image(track["album"]["images"][0]["url"], width=200)
-                        with col2:
-                            st.success(f"✨ Found on Spotify: **{track['name']}**")
-                            st.write(f"Artist: {track['artists'][0]['name']}")
-                            st.write(f"Album: {track['album']['name']}")
-                            st.caption(f"🔗 [Open on Spotify](https://open.spotify.com/track/{track['id']})")
-                        
-                        st.divider()
-                        st.subheader(f"🎵 Top {n_recommendations} Matches in Our Dataset:")
-                        for idx, (_, row) in enumerate(recommendations.iterrows(), 1):
-                            col1, col2 = st.columns([0.3, 3])
+                        if not audio_features:
+                            st.error(f"❌ Could not fetch audio features for '{track['name']}'")
+                        else:
+                            live_vector = [
+                                audio_features.get("danceability", 0.5),
+                                audio_features.get("energy", 0.5),
+                                audio_features.get("tempo", 120),
+                                audio_features.get("valence", 0.5)
+                            ]
+                            
+                            live_vector_scaled = scaler.transform([live_vector])
+                            similarities = cosine_similarity(live_vector_scaled, scaled_features)[0]
+                            
+                            temp_df = df.copy()
+                            temp_df["similarity"] = similarities
+                            recommendations = temp_df.sort_values(by="similarity", ascending=False).head(n_recommendations)
+                            
+                            # Display found song
+                            col1, col2 = st.columns([1, 2])
                             with col1:
-                                st.metric("", f"#{idx}")
+                                if track["album"]["images"]:
+                                    st.image(track["album"]["images"][0]["url"], width=200)
                             with col2:
-                                st.write(f"**{row['song']}** • {row['artist']}")
-                                st.caption(f"📂 {row['genre']} • ⭐ {row['popularity']}/100")
+                                st.success(f"✨ Found on Spotify: **{track['name']}**")
+                                st.write(f"Artist: {track['artists'][0]['name']}")
+                                st.write(f"Album: {track['album']['name']}")
+                                st.caption(f"🔗 [Open on Spotify](https://open.spotify.com/track/{track['id']})")
+                            
+                            st.divider()
+                            st.subheader(f"🎵 Top {n_recommendations} Matches in Our Dataset:")
+                            for idx, (_, row) in enumerate(recommendations.iterrows(), 1):
+                                col1, col2 = st.columns([0.3, 3])
+                                with col1:
+                                    st.metric("", f"#{idx}")
+                                with col2:
+                                    st.write(f"**{row['song']}** • {row['artist']}")
+                                    st.caption(f"📂 {row['genre']} • ⭐ {row['popularity']}/100")
                         
-            except Exception as e:
-                st.error(f"❌ Spotify API Error: {str(e)}")
+                except spotipy.exceptions.SpotifyException as e:
+                    st.error(f"❌ Spotify API Error: {str(e)}")
+                    st.info("💡 Your credentials might be invalid. Check app settings → Secrets")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+                    st.info("💡 Please try again or refresh the page")
 
 # ====== PAGE 4: FEATURE ANALYSIS ======
 elif page == "📊 Feature Analysis":
@@ -327,7 +343,7 @@ elif page == "ℹ️ About":
     st.markdown("""
     ### 🎵 Music Recommendation System
     
-    A Python-based recommendation engine that suggests songs based on audio features and user preferences.
+    A Python-based recommendation engine that suggests songs based on audio features and user preferences using Spotify's audio features.
     
     #### 🎯 Features
     - **Song-to-Song**: Find similar songs using cosine similarity
@@ -336,7 +352,7 @@ elif page == "ℹ️ About":
     - **Feature Analysis**: Visualize audio feature distributions
     
     #### 🔧 How It Works
-    The system uses machine learning to compare songs based on:
+    The system uses **cosine similarity** to compare songs based on:
     - **Danceability** (0-1): How suitable for dancing
     - **Energy** (0-1): Intensity and activity
     - **Tempo**: Speed in beats per minute
