@@ -36,9 +36,16 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Load environment variables
-load_dotenv("file.env")
-client_id = os.getenv("SPOTIFY_CLIENT_ID")
-client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+# For Streamlit Cloud: use st.secrets, for local: use .env
+try:
+    # Streamlit Cloud
+    client_id = st.secrets["SPOTIFY_CLIENT_ID"]
+    client_secret = st.secrets["SPOTIFY_CLIENT_SECRET"]
+except (KeyError, FileNotFoundError):
+    # Local development
+    load_dotenv("file.env")
+    client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
 
 # Load dataset
 @st.cache_data
